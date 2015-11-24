@@ -228,7 +228,7 @@ class AntennalLobe():
         self.gl_list = []
 
     def setGlomeruli(self, anatomy_db=None, odor_db=None, gl_name=None,
-                     pn_num=None, osn_num=None, rand=0.):
+                     pn_num=3, osn_num=50, rand=0.):
         if anatomy_db is not None: self.anatomy_db = anatomy_db
         if odor_db is not None: self.odor_db = odor_db
         if gl_name is not None: self.gl_name = gl_name

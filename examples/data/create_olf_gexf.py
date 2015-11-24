@@ -4,7 +4,7 @@
 Create GEXF file detailing antennal lobe neurons and synapses.
 """
 
-from olf_spec import *
+from antennallobe import *
 from random import seed
 
 seed(200601050) 
