@@ -3,8 +3,12 @@ Olfaction specification for NeuroKernel
 """
 from random import uniform
 import numpy as np
+from collections import OrderedDict
 from lxml import etree
+from abc import ABCMeta, abstractmethod, abstractproperty
 import gzip
+from neuron import *
+from synapse import *
 
 Odor_databas       = {'Acetone':[ 1, -10,  29,   0, -25, 38,
                                  -7, -10,   8, -16,  11,  3,
@@ -67,262 +71,51 @@ Hallem06 = {
     'type':'osn_spike_rate'
     }
 
-class Receptor:
-    """
-    Dummy receptor for setting up ports; no computation invloved in this class
-    """
-    def __init__(self, id=None, name=None, selector=None):
-        self.id = id
-        self.name = name
-        self.selector = selector or ''
 
-    def setattr(self,**kwargs):
+class LocalNeuron:
+    def __init__(self, name, pre_gl_list, post_gl_list=None, \
+                para=dict(),pre_para=dict(), post_para=dict(), database = Hallem06 ):
         """
-        A wrapper of python built-in setattr(). self is returned.
+        Inter-Glomerular Local Neuron
         """
-        for kw, val in kwargs.items():
-            setattr( self, kw, val )
-        return self
+        self.neu = LeakyIAF(
+            name   = name,
+            V0     = database['pn_para']['V0'],
+            Vr     = database['pn_para']['Vr'],
+            Vt     = database['pn_para']['Vt'],
+            R      = database['pn_para']['R'],
+            C      = database['pn_para']['C'],
+            public = False,
+            extern = False)
 
-    def toGEXF(self,etree_element):
-        node = etree.SubElement(etree_element, "node", id=str(self.id))
-        attr = etree.SubElement(node, "attvalues")
-        etree.SubElement(attr, "attvalue", attrib={"for":"0", "value":"port_in_gpot"})
-        etree.SubElement(attr, "attvalue", attrib={"for":"1", "value":self.name})
-        for i, _ in enumerate(('spiking','public','extern')):
-            etree.SubElement( attr, "attvalue", attrib={"for":str(7+i), "value":"false" })
-        etree.SubElement(attr, "attvalue", attrib={"for":"10", "value":self.selector})
-
-class DummySynapse:
-    """
-    Dummy-Synapse
-    """
-    def __init__(self, name=None, id=None, pre_neu=None, post_neu=None):
-        self.id = id
-        self.name = name
-        self.pre_neu = pre_neu
-        self.post_neu = post_neu
-
-    def prepare(self,dt=0.):
-        pass
-
-    def update(self,dt):
-        pass
-
-    def show(self):
-        pass
-
-    def setattr(self,**kwargs):
-        """
-        A wrapper of python built-in setattr(). self is returned.
-        """
-        for kw, val in kwargs.items():
-            setattr( self, kw, val )
-        return self
-
-    def toGEXF(self,etree_element):
-        edge = etree.SubElement( etree_element, "edge", id=str(self.id),
-            source=str(self.pre_neu.id), target=str(self.post_neu.id))
-        attr = etree.SubElement( edge, "attvalues" )
-        etree.SubElement(attr, "attvalue",attrib={"for":"0","value":"DummySynapse"})
-        etree.SubElement(attr, "attvalue", attrib={"for":"1", "value":self.name})
-        etree.SubElement(attr, "attvalue",attrib={"for":"6","value":"2"})
-        etree.SubElement(attr, "attvalue",attrib={"for":"7","value":"false"})
-
-class AlphaSynapse:
-    """
-    Alpha-Synapse
-    """
-    def __init__(self, name=None, id=None, reverse=-0.06, ar=400., ad=400., gmax=1.,\
-                 pre_neu=None,post_neu=None, rand=0.):
-        self.id = id
-        self.name = name
-        self.reverse = reverse*uniform(1.-rand,1.+rand) # the reverse potential
-        self.ar = ar*uniform(1.-rand,1.+rand)           # the rise rate of the synaptic conductance
-        self.ad = ad *uniform(1.-rand,1.+rand)          # the drop rate of the synaptic conductance
-        self.gmax = gmax*uniform(1.-rand,1.+rand)       # maximum conductance
-        self.I = 0.
-        self.a = np.zeros(3,)       # a stands for alpha
-        self.pre_neu = pre_neu
-        self.post_neu = post_neu
-
-    def prepare(self,dt=0.):
-        pass
-
-    def update(self,dt):
-        """
-        Update the synapse state variables
-        """
-        new_a = np.zeros(3)
-        # update a
-        new_a[0] = max([0., self.a[0]+dt*self.a[1]])
-        # update a'
-        new_a[1] = self.a[1]+dt*self.a[2]
-        if self.pre_neu.isSpiking:
-            new_a[1] += self.ar*self.ad
-        # update a"
-        new_a[2] = -(self.ar+self.ad)*new_a[1] - self.ar*self.ad*new_a[0]
-        # copy new_a to a
-        self.a[:] = new_a
-        # update synaptic current
-        self.I = self.gmax*self.a[0]*(self.post_neu.V-self.reverse)
-
-    def show(self):
-        print "%s gmax:%.2f reverse:%.2f ar:%.2f ad:%.2f" % \
-              (self.name,self.gmax,self.Vr,self.ar,self.ad)
-
-    def setattr(self,**kwargs):
-        """
-        A wrapper of python built-in setattr(). self is returned.
-        """
-        for kw, val in kwargs.items():
-            setattr( self, kw, val )
-        return self
-
-    def toGEXF(self,etree_element):
-        edge = etree.SubElement( etree_element, "edge", id=str(self.id),
-            source=str(self.pre_neu.id), target=str(self.post_neu.id))
-        attr = etree.SubElement( edge, "attvalues" )
-        etree.SubElement(attr,"attvalue",attrib={"for":"0","value":"AlphaSynapse"})
-        for i,att in enumerate( ("name","reverse","ar","ad","gmax") ):
-            etree.SubElement( attr, "attvalue",\
-                attrib={"for":str(i+1), "value":str(getattr(self,att)) })
-        etree.SubElement(attr,"attvalue",attrib={"for":"6","value":"0"})
-        etree.SubElement(attr,"attvalue",attrib={"for":"7","value":"true"})
-
-    @staticmethod
-    def getGEXFattr(etree_element):
-        """
-        generate GXEF attributes
-        """
-        def_type = etree.SubElement( etree_element, "attribute",\
-                       id="0", type="string", title="model" )
-        etree.SubElement( def_type, "default" ).text = "AlphaSynapse"
-        etree.SubElement( etree_element, "attribute",\
-            id="1", type="string", title="name" )
-        for (i,attr) in enumerate( ("reverse","ar","ad","gmax") ):
-            etree.SubElement( etree_element, "attribute",\
-                id=str(i+2), type="float", title=attr )
-        etree.SubElement( etree_element, "attribute", id="6",\
-            type="integer", title="class" )
-        etree.SubElement( etree_element, "attribute", id="7",
-            type="boolean", title="conductance")
-
-class LeakyIAF:
-    """
-    Leaky Integrated-and-Fire Neuron
-    """
-
-    def __init__(self,id=None,name=None,V0=0.,Vr=-0.05,Vt=-0.02,R=1.,C=1.,\
-                 syn_list=None,public=True,extern=True,rand=0.,\
-                 selector=None,model=None):
-        self.id = id
-        self.name = name
-        self.Vr = Vr*uniform(1.-rand,1.+rand)
-        self.Vt = Vt*uniform(1.-rand,1.+rand)
-        self.R = R*uniform(1.-rand,1.+rand)
-        self.C = C*uniform(1.-rand,1.+rand)
-        self.V = uniform(self.Vr,self.Vt)
-
-        # For GEXF
-        self.public = public
-        self.extern = extern
-
-        # For port API
-        self.selector = selector or ''
-        self.model = model
-
-        self.isSpiking = False
-        if syn_list is not None:
-            self.syn_list = syn_list
-        else:
-            self.syn_list = []
-
-    def prepare(self,dt=0):
-        """
-        prepare intermediate variables for simulation
-
-        - self.bh : a variable used by Exponential Euler method
-        """
-        self.bh = np.exp( -dt/self.R/self.C )
-
-    def update(self, I_ext=0.):
-        """
-        Update the neuron state
-
-        This function is split into three steps: 1) compute external current 2)
-        update membrane voltage 3) spike detection. The reverse potential of
-        every synapse is assumed to be the same as the resting potential of the
-        neuron. The exponential Euler method is applied to perform the
-        numerical integration.
-
-        input:
-
-        """
-
-        # Compute the total external current
-        I_syn = 0.
-        for syn in self.syn_list:
-            I_syn += syn.I
-        self.I = I_ext + I_syn
-
-        # Update the membrane voltage
-        self.V = self.V*self.bh + self.R*self.I*(1-self.bh)
-        # Spike detection
-        if self.V >= self.Vt:
-            self.V = self.Vr
-            self.isSpiking = True
-        else:
-            self.isSpiking = False
-
-    def show(self):
-        """
-        print the neuron parameters
-        """
-        print "%s->%s %f %f %f %f %f" % \
-              (self.pre_neu.name,self.post_neu.name,\
-              self.Vr,self.Vt,self.R,self.C)
-
-    def setattr(self,**kwargs):
-        """
-        A wrapper of python built-in setattr(). self is returned.
-        """
-        for kw, val in kwargs.items():
-            setattr( self, kw, val )
-        return self
-
-    def toGEXF(self,etree_element):
-        node = etree.SubElement( etree_element, "node", id=str(self.id) )
-        attr = etree.SubElement( node, "attvalues" )
-        etree.SubElement(attr,"attvalue",attrib={"for":"0","value":"LeakyIAF"})
-        for i,att in enumerate( ("name","V","Vr","Vt","R","C",) ):
-            etree.SubElement( attr, "attvalue",\
-                attrib={"for":str(i+1), "value":str(getattr(self,att)) })
-        etree.SubElement( attr, "attvalue", attrib={"for":"7", "value":"true" })
-        etree.SubElement( attr, "attvalue", attrib={"for":"8", "value":"true" if self.public else "false" })
-        etree.SubElement( attr, "attvalue", attrib={"for":"9", "value":"true" if self.extern else "false" })
-        etree.SubElement( attr, "attvalue", attrib={"for":"10", "value":self.selector })
-
-    @staticmethod
-    def getGEXFattr(etree_element):
-        """
-        generate GXEF attributes
-
-        """
-        def_type = etree.SubElement( etree_element, "attribute",\
-                       id="0", type="string", title="model" )
-        etree.SubElement( def_type, "default" ).text = "LeakyIAF"
-        etree.SubElement( etree_element, "attribute",\
-            id="1", type="string", title="name" )
-        for (i,attr) in enumerate( ("V","Vr","Vt","R","C") ):
-            etree.SubElement( etree_element, "attribute",\
-                id=str(i+2), type="float", title=attr )
-        for (i,attr) in enumerate( ("spiking","public","extern") ):
-            etree.SubElement( etree_element, "attribute",\
-                id=str(i+7), type="boolean", title=attr )
-        for (i,attr) in enumerate(("selector",)):
-            etree.SubElement( etree_element, "attribute",\
-                id=str(i+10), type="string", title=attr )
+        self.syn_list = []
+        # assuming that LN-GL connectivity is reciprical
+        for gl in pre_gl_list:
+            # OSN->LN synapse
+            for osn in gl.osn_list:
+                self.syn_list.append( AlphaSynapse(
+                    name     = str('%s-%s'% (osn.name,self.neu.name)),
+                    gmax     = database['op_syn_para']['gmax'],
+                    reverse  = database['op_syn_para']['reverse'],
+                    ar       = database['op_syn_para']['ar'],
+                    ad       = database['op_syn_para']['ad'],
+                    pre_neu  = osn,
+                    post_neu = self.neu))
+        # Assuming that LN-GL connectivity is reciprical if post_gl is None
+        if not post_gl_list:
+            post_gl_list = pre_gl_list
+        for gl in post_gl_list:
+            # LN->OSN synapse
+            for syn in gl.syn_list:
+                if "pn" in syn.name:
+                    self.syn_list.append( AlphaSynapse(
+                        name     = str('%s=%s'% (self.neu.name,syn.name)),
+                        gmax     = database['op_syn_para']['gmax'],
+                        reverse  = np.nan,
+                        ar       = database['op_syn_para']['ar'],
+                        ad       = database['op_syn_para']['ad'],
+                        pre_neu  = self.neu,
+                        post_neu = syn))
 
 class Glomerulus:
     """
@@ -392,9 +185,9 @@ class Glomerulus:
                 name=str('rece-%s' % (self.osn_list[i].name,)),
                 pre_neu=self.rece_list[i],
                 post_neu=self.osn_list[i]))
-           # setup synpases from the current OSN to each of PNs
+            # setup synpases from the current OSN to each of PNs
             for j in xrange(self.pn_num):
-                self.syn_list.append(AlphaSynapse(
+                self.syn_list.append(PreInhSynapse(
                     name=str('%s-%s'% (self.osn_list[i].name,\
                                          self.pn_list[j].name)),
                     gmax=database['op_syn_para']['gmax'],
@@ -431,12 +224,13 @@ class AntennalLobe():
         self.gl_name = gl_name
         self.neu_list = None
         self.syn_list = None
+        self.ln_list = []
+        self.gl_list = []
 
     def setGlomeruli(self, anatomy_db=None, odor_db=None, gl_name=None, rand=0.):
         if anatomy_db is not None: self.anatomy_db = anatomy_db
         if odor_db is not None: self.odor_db = odor_db
         if gl_name is not None: self.gl_name = gl_name
-        self.gl_list = []
         for i,gl in enumerate(self.gl_name):
             #assert( gl is in self.database['gl'] )
             self.gl_list.append( Glomerulus(
@@ -446,6 +240,17 @@ class AntennalLobe():
                 database=self.odor_db,
                 osn_type=self.anatomy_db['gl'][gl],
                 rand=rand))
+        self.gl_dict = {gl.name:gl for gl in self.gl_list}
+
+    def addLN(self, ln_name, pre_gl_list, post_gl_list = [], pre_para = {}, post_para = {}):
+            assert( set(pre_gl_list) <= set(self.gl_name.keys()))
+            assert( set(post_gl_list) <= set(self.gl_name.keys()))
+            pre_gl_list = {self.gl_dict[x] for x in pre_gl_list}
+            post_gl_list = {self.gl_dict[x] for x in post_gl_list}
+            self.ln_list.append(LocalNeuron(
+                ln_name,
+                pre_gl_list,
+                post_gl_list))
 
     def setLN():
         pass
@@ -459,10 +264,10 @@ class AntennalLobe():
         graph = etree.SubElement( root, "graph", defaultedgetype="directed" )
         # add node(neuron) attributes
         node = etree.SubElement( graph, "attributes", attrib={"class":"node"} )
-        LeakyIAF.getGEXFattr( node )
+        Neuron.getGEXFattr( node )
         # add edge(synapse) attributes
         edge = etree.SubElement( graph, "attributes", attrib={"class":"edge"} )
-        AlphaSynapse.getGEXFattr( edge )
+        Synapse.getGEXFattr( edge )
         # convert all neurons into GEXF
         nodes = etree.SubElement( graph, "nodes" )
         for neu in self.neu_list: neu.toGEXF( nodes )
@@ -479,11 +284,11 @@ class AntennalLobe():
 
     def _getAllNeuList(self):
         self.neu_list = []
-        # stack OSN into the neuron list
+        # stack OSN onto the neuron list
         for gl in self.gl_list:
             for neu in gl.osn_list:
                 self.neu_list.append( neu.setattr( id=len(self.neu_list)))
-        # stack PN into the neuron list
+        # stack PN onto the neuron list
         for gl in self.gl_list:
             for neu in gl.pn_list:
                 self.neu_list.append( neu.setattr( id=len(self.neu_list)))
@@ -491,9 +296,15 @@ class AntennalLobe():
         for gl in self.gl_list:
             for rece in gl.rece_list:
                 self.neu_list.append( rece.setattr(id=len(self.neu_list)))
+        # stack OSN onto the neuron list
+        for ln in self.ln_list:
+            self.neu_list.append( ln.neu.setattr( id=len(self.neu_list)))
 
     def _getAllSynList(self):
         self.syn_list = []
         for gl in self.gl_list:
             for syn in gl.syn_list:
+                self.syn_list.append( syn.setattr( id=len(self.syn_list)))
+        for neu in self.ln_list:
+            for syn in neu.syn_list:
                 self.syn_list.append( syn.setattr( id=len(self.syn_list)))
